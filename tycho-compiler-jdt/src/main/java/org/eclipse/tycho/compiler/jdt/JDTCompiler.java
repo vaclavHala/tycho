@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.io.Writer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -27,6 +28,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.StringJoiner;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -354,10 +356,12 @@ public class JDTCompiler extends AbstractCompiler {
 
         List<CompilerMessage> messages;
 
-        StringWriter out = new StringWriter();
+        StringWriter outErr = new StringWriter();
         StringWriter err = new StringWriter();
+        Consumer<String> logCompilerInOut = config.isVerbose() ? getLogger()::info : getLogger()::debug;
 
-        Main compiler = new Main(new PrintWriter(out), new PrintWriter(err), false, null, null);
+        Main compiler = new Main(new PrintWriter(outErr), new PrintWriter(new MultiWriter(err, outErr)), false, null,
+                null);
         compiler.options.put(CompilerOptions.OPTION_ReportForbiddenReference, CompilerOptions.ERROR);
         List<String> jdtCompilerArgs = new ArrayList<>(Arrays.asList(args));
         if (custom.javaHome != null) {
@@ -366,13 +370,12 @@ public class JDTCompiler extends AbstractCompiler {
                 addExternalJavaHomeArgs(jdtCompilerArgs, custom.javaHome);
             }
         }
-        getLogger().debug("JDT compiler args: " + jdtCompilerArgs);
+        logCompilerInOut.accept("JDT compiler args: " + jdtCompilerArgs);
         boolean success = compiler.compile(jdtCompilerArgs.toArray(new String[0]));
 
         try {
-            String output = err.toString();
-            getLogger().debug("Original compiler output: " + output);
-            messages = parseModernStream(new BufferedReader(new StringReader(output)));
+            logCompilerInOut.accept("Original compiler output: " + outErr.toString());
+            messages = parseModernStream(new BufferedReader(new StringReader(err.toString())));
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -602,4 +605,35 @@ public class JDTCompiler extends AbstractCompiler {
 
     }
 
+    private static class MultiWriter extends Writer {
+        private final StringWriter[] delegates;
+
+        // technically this would work with any Writer
+        // but I want to be explicit about what the delegates are
+        // so its obvious in the other methods there is not need for IOException handling
+        MultiWriter(StringWriter... delegates) {
+            this.delegates = delegates;
+        }
+
+        @Override
+        public void write(char[] cbuf, int off, int len) {
+            for (var w : delegates) {
+                w.write(cbuf, off, len);
+            }
+        }
+
+        @Override
+        public void flush() {
+            for (var w : delegates) {
+                w.flush();
+            }
+        }
+
+        @Override
+        public void close() throws IOException {
+            for (var w : delegates) {
+                w.close();
+            }
+        }
+    }
 }
